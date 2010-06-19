@@ -287,6 +287,10 @@ class AppController extends Controller {
 		}
 		unset($conditions[$this->modelClass . '.theme']);
 		unset($conditions[$this->modelClass . '.language']);
+		if (isset($conditions['Node.lang'])) {
+			$conditions['Revision.lang'] = $conditions['Node.lang'];
+			unset($conditions['Node.lang']);
+		}
 		$Node = ClassRegistry::init('Node');
 		$collections = $Node->find('all', array('conditions' => array('Node.parent_id' => 1), 'fields' => 'Node.*, Revision.title'));
 		$books = $Node->find('all', array('conditions' => array('Node.depth' => 2), 'fields' => 'Node.*, Revision.title'));
