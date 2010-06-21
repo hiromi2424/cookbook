@@ -203,6 +203,40 @@ class NodesController extends AppController {
 		$file = new File(TMP . $filename);
 		$file->write(ob_get_clean());
 	}
+
+
+/**
+ * admin_firstImport method
+ *
+ * @return void
+ * @access public
+ */
+	function admin_first_import() {
+		if ($this->data) {
+			if ($this->data['Node']['take_backup']) {
+				$this->requestAction('/admin/nodes/export', array('return'));
+			}
+			if (!$this->data['Node']['file']['error']) {
+				$xml = file_get_contents($this->data['Node']['file']['tmp_name']);
+				if (!file_exists(TMP . $this->data['Node']['file']['name'])) {
+					$file = new File(TMP . $this->data['Node']['file']['name']);
+					$file->write($xml);
+				}
+			} else {
+				$this->Session->setFlash('No Xml file to import');
+				$this->redirect(array());
+			}
+			$result = $this->Node->firstImport($xml, $this->data['Node'], $this->Auth->user('id'));
+			return;
+			if ($result) {
+				$this->redirect(array('action' => 'index'));
+			} else {
+				$this->Session->setFlash('First import failed.');
+				$this->redirect(array());
+			}
+		}
+	}
+
 /**
  * admin_import method
  *

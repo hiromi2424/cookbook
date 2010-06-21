@@ -466,6 +466,96 @@ class Node extends AppModel {
 	function generatetreelist($conditions = null) {
 		return $this->find('list', array('order' => 'lft', 'conditions' => $conditions));
 	}
+
+/**
+ * firstImport method
+ *
+ * accepts an xml dump (generated from the nodes controller admin_export function)
+ * and contents with the file contents.
+ *
+ * @param mixed $xml
+ * @return void
+ * @access public
+ */
+	function first_import($xml, $options = array(), $thisUser = false){
+		$deleteFirst = true;
+		$addingTranslation = false;
+		extract($options);
+		
+		uses('Xml');
+		$xml = new Xml($xml);
+		$xml = Set::reverse($xml);
+		$meta = Set::extract($xml, '/Contents/Meta');
+		$nodes = Set::extract($xml, '/Contents/Node');
+		$nodes = $nodes[0];
+		$ids = Set::extract($nodes, '/Node/id');
+		set_time_limit(count($ids) * 2);
+		unset($this->Revision->validate['content']);
+		
+		if (Configure::read('Languages.default') != $meta[0]['Meta']['lang']) {
+			$addingTranslation = true;
+			if ($this->find('count') > 0) {
+				$deleteFirst = false;
+			}
+		}
+		
+		$db =& ConnectionManager::getDataSouce($this->useDbConfig);
+		
+		$db->begin($this);
+		
+		if ($deleteFirst) {
+			$db =& ConnectionManager::getDatasource('default');
+			$db->query('truncate nodes');
+			$db->query('truncate changes');
+			$db->query('truncate revisions');
+		}
+		
+		foreach ($nodes['Node'] as $i => $row) {
+			extract($row);
+			if ($addingTranslation && $Revision['lang'] == Configure::read('Languages.default')) {
+				continue;
+			}
+			$parent_id = empty($parent_id) ? null : $parent_id;
+			if (!$addingTranslation) {
+				$depth = empty($depth) ? 0 : $depth;
+				$show_in_toc = empty($show_in_toc) ? 0 : 1;
+				$status = 1;
+				$sequence = null;
+				$toSave = compact('id', 'parent_id', 'depth', 'status', 'show_in_toc');
+				if ($i == 0) {
+					$toSave['lft'] = 1;
+					$toSave['rght'] = 2;
+				} else {
+					$toSave['lft'] = $parent_id;
+					$rght = $this->field('id', array('parent_id' => $id ));
+					$toSave['rght'] = empty($rght) ? 0 : $rght;
+				}
+				$this->create();
+				$this->id = false;
+				if (!$this->save(array('Node' => $toSave), false)) {
+					$db->rallback($this);
+					return false;
+				}
+			}
+			$toSave = $Revision;
+			$toSave['reason'] = (empty($toSave['reason']) || is_array($toSave['reason'])) ? "" : $toSave['reason'];
+			$toSave['content'] = (empty($toSave['content']) || is_array($toSave['content'])) ? "" : $toSave['content'];
+			$toSave['node_id'] = $id;
+			$toSave['under_node_id'] = $parent_id;
+			$toSave['status'] = 'current';
+			if ($thisUser) {
+				$toSave['user_id'] = $thisUser;
+			}
+			$this->Revision->create();
+			if (!$this->Revision->save(array('Revision' => $toSave), false)) {
+				$db->rallback($this);
+				return false;
+			}
+		}
+		$db->commit($this);
+		return true;
+	}
+
 /**
  * import method
  *
@@ -490,6 +580,7 @@ class Node extends AppModel {
 		$xml = Set::reverse($xml);
 		$meta = Set::extract($xml, '/Contents/Meta');
 		$nodes = Set::extract($xml, '/Contents/Node');
+		$nodes = $nodes[0];
 		$ids = Set::extract($nodes, '/Node/id');
 		set_time_limit(count($ids) * 2);
 		if ($delete_missing) {
@@ -510,30 +601,30 @@ class Node extends AppModel {
 		$counters = array();
 		$webroot = Router::url('/');
 		$i = 0;
-		foreach ($nodes as $i => $row) {
-			$parent = isset($row['Node']['parent_id'])?$row['Node']['parent_id']:null;
+		foreach ($nodes['Node'] as $i => $row) {
+			$parent = !empty($row['parent_id'])?$row['parent_id']:null;
 			if ($i == 0) {
-				if ($first && $first != $row['Node']['id']) {
+				if ($first && $first != $row['id']) {
 					return array(false, array('This import file is incompatible with the current install'), array());
 				}
-				if (isset($row['Node']['position'])) {
-					$counters[$parent] = $row['Node']['position'];
+				if (isset($row['position'])) {
+					$counters[$parent] = $row['position'];
 				}
 			}
 			if (!$parent && $i > 0) {
-				$errors[] = 'Duplicate root node detected Id: ' . $row['Node']['id'] . ', halting processing';
+				$errors[] = 'Duplicate root node detected Id: ' . $row['id'] . ', halting processing';
 				break;
 			}
 			$current = $this->find('first', array(
-				'conditions' => array('Node.id'	 => $row['Node']['id']),
+				'conditions' => array('Node.id'	 => $row['id']),
 				'recursive' => 0,
 				'fields' => array('Node.parent_id', 'Node.show_in_toc', 'Node.lft',
 				'Revision.id', 'Revision.title', 'Revision.content')
 			));
 			$showInToc = null;
-			if (isset($row['Node']['show_in_toc'])) {
-				$showInToc = $row['Node']['show_in_toc'];
-			} elseif (isset($row['Node']['ShowInToc'])) {
+			if (isset($row['show_in_toc'])) {
+				$showInToc = $row['show_in_toc'];
+			} elseif (isset($row['ShowInToc'])) {
 				$showInToc = false;
 			}
 			if (!$current) {
@@ -546,15 +637,15 @@ class Node extends AppModel {
 					$max = $max[0][0]['rght'];
 					$lft = $max + 1;
 					$rght = $lft + 1;
-					$this->query('INSERT INTO `nodes` (`id`, `lft`, `rght`) VALUES (\'' . $row['Node']['id'] . "', $lft, $rght)");
+					$this->query('INSERT INTO `nodes` (`id`, `lft`, `rght`) VALUES (\'' . $row['id'] . "', $lft, $rght)");
 				}
 				/* This code shouldn't be necessary end */
 				$adds++;
 			}
 			if (!$current ||
 				($current['Node']['parent_id'] != $parent && $allow_moves)) {
-				$this->id = $row['Node']['id'];
-				$toSave = array('id' => $row['Node']['id'], 'parent_id' => $parent);
+				$this->id = $row['id'];
+				$toSave = array('id' => $row['id'], 'parent_id' => $parent);
 				if ($showInToc !== null) {
 					$toSave['show_in_toc'] = $showInToc;
 				}
@@ -566,7 +657,7 @@ class Node extends AppModel {
 					$moves++;
 				}
 			} elseif ($showInToc !== null && $current['Node']['show_in_toc'] != $showInToc) {
-				$this->id = $row['Node']['id'];
+				$this->id = $row['id'];
 				$this->saveField('show_in_toc', $showInToc);
 			}
 			if (!isset($counters[$parent])) {
@@ -579,24 +670,24 @@ class Node extends AppModel {
 					'conditions' => array('parent_id' => $parent, 'lft <' => $current['Node']['lft'])));
 			} else {
 				$previousSiblings = $this->find('count', array('recursive' => -1,
-					'conditions' => array('parent_id' => $parent, 'id !=' => $row['Node']['id'])));
+					'conditions' => array('parent_id' => $parent, 'id !=' => $row['id'])));
 			}
 			$difference = $previousSiblings - $counters[$parent];
 			if ($difference) {
 				if ($difference > 0) {
-					$this->moveUp($row['Node']['id'], $difference);
+					$this->moveUp($row['id'], $difference);
 				} else {
-					$this->moveDown($row['Node']['id'], $difference);
+					$this->moveDown($row['id'], $difference);
 				}
 			}
-			if (!isset($row['Node']['Revision']['id']) || !$row['Node']['Revision']['id']) {
-				if (isset($row['Node']['Revision']['lang']) && $row['Node']['Revision']['lang'] != $importLang) {
+			if (!isset($row['Revision']['id']) || !$row['Revision']['id']) {
+				if (isset($row['Revision']['lang']) && $row['Revision']['lang'] != $importLang) {
 					$message['language'] = 'Some sections in the import have not been translated, import English version to inherit original contents';
 				}
 				continue;
 			}
-			$title = $row['Node']['Revision']['title'];
-			$content = isset($row['Node']['Revision']['content'])?$row['Node']['Revision']['content']:'';
+			$title = $row['Revision']['title'];
+			$content = isset($row['Revision']['content'])?$row['Revision']['content']:'';
 			if ($webroot != '/') {
 				$content = preg_replace('@(href|src)=(\'|")/@', '\\1=\\2' . $webroot, $content);
 			}
@@ -614,11 +705,11 @@ class Node extends AppModel {
 				}
 			}
 			if (!$exists && $different) {
-				$reason = isset($row['Node']['Revision']['reason'])?$row['Node']['Revision']['reason']:'Revision Imported';
-				$user_id = isset($row['Node']['Revision']['user_id'])?$row['Node']['Revision']['user_id']:$thisUser;
+				$reason = isset($row['Revision']['reason'])?$row['Revision']['reason']:'Revision Imported';
+				$user_id = isset($row['Revision']['user_id'])?$row['Revision']['user_id']:$thisUser;
 				$this->Revision->create();
 				$toSave = array(
-					'node_id' => $row['Node']['id'],
+					'node_id' => $row['id'],
 					'under_node_id' => $parent,
 					'status' => 'pending',
 					'user_id' => $user_id,
