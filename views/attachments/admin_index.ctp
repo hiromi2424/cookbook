@@ -13,7 +13,8 @@ $th = array(
 );
 echo $html->tableHeaders($th);
 foreach ($data as $row) {
-	if (isset($row[$class])) {
+	if (isset($row[$modelClass])) {
+		extract($row[$modelClass]);
 		$other = $row['Attachment']['class'];
 		$otherController = Inflector::pluralize($other);
 		if (isset($row[$other]['id'])) {
